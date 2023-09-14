@@ -23,17 +23,17 @@ inputs:
       [Learn more about creating and using encrypted secrets](https://help.github.com/en/actions/automating-your-workflow-with-github-actions/creating-and-using-encrypted-secrets)
     default: ${{ github.token }}
   cmake-flags:
-    description: 'Flags to pass to cmake'
+    description: 'Flags to pass to cmake on build'
     default: ''
 outputs:
   cache-restore-hit:
-    description: 'Whether the cache was hit or not'
+    description: 'Whether the cache was hit or not on restore'
     value: ${{ steps.restore.outputs.cache-hit }}
   cache-save-hit:
-    description: 'Whether the cache was hit or not'
+    description: 'Whether the cache was hit or not on save'
     value: ${{ steps.save.outputs.cache-hit }}
   latest-ref:
-    description: 'The latest ref of the repository'
+    description: 'The latest ref of the repository (sha)'
     value: ${{ steps.latest-ref.outputs.latest-ref }}
 runs:
   using: "composite"
