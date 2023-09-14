@@ -42,8 +42,8 @@ runs:
       id: latest-ref
       shell: bash
       run: |
-        echo "latest-ref=$( curl -s https://api.github.com/repos/${{ inputs.repository }}/commits/master --header "Authorization: Bearer $GITHUB_TOKEN" | jq -r '.sha' )" >> $GITHUB_OUTPUT
-        echo "repo-name=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: Bearer $GITHUB_TOKEN" | jq -r '.name' )" >> $GITHUB_OUTPUT
+        echo "latest-ref=$( curl -s https://api.github.com/repos/${{ inputs.repository }}/commits/master --header "Authorization: token ${{ inputs.token }}" | jq -r '.sha' )" >> $GITHUB_OUTPUT
+        echo "repo-name=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.name' )" >> $GITHUB_OUTPUT
         cat $GITHUB_OUTPUT
     - name: Restore build from cache
       id: restore
