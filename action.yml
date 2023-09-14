@@ -39,18 +39,18 @@ runs:
       with:
         path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/build
         key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ steps.latest-ref.outputs.latest-ref }}
-    - if: ${{ steps.restore.outputs.cache-hit != 'true' }}}
+    - if: steps.restore.outputs.cache-hit != 'true'
       name: Checkout repo
       uses: actions/checkout@v2
       with:
         repository: ${{ inputs.repository }}
         ref: ${{ inputs.ref }}
         path: ${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/git
-    - if: ${{ steps.restore.outputs.cache-hit != 'true' }}}
+    - if: steps.restore.outputs.cache-hit != 'true'
       name: Build repo
       shell: bash
       run: cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }} && mkdir -p build && cd build && cmake ${{ inputs.cmake-flags }} ../git && make
-    - if: ${{ steps.restore.outputs.cache-hit != 'true' }}}
+    - if: steps.restore.outputs.cache-hit != 'true'
       name: Save build to cache
       id: save
       uses: actions/cache/save@v3
