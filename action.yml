@@ -38,10 +38,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: lyricwulf/abc@v1.2.0
-      with:
-        all: jq
-      
     - name: Get latest ref
       id: latest-ref
       shell: bash
