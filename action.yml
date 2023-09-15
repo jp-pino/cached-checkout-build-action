@@ -38,7 +38,7 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: jp-pino/abc@v1.3.0
+    - uses: lyricwulf/abc@v1.2.0
       with:
         all: jq
       
