@@ -57,7 +57,7 @@ runs:
       env:
         cache-name: cache-${{ steps.latest-ref.outputs.repo-name }}
       with:
-        path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}
+        path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/cache
         key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ steps.latest-ref.outputs.latest-ref }}
     - if: steps.restore.outputs.cache-hit != 'true'
       name: Checkout repo
@@ -70,7 +70,13 @@ runs:
     - if: steps.restore.outputs.cache-hit != 'true'
       name: Build repo
       shell: bash
-      run: cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }} && mkdir -p build && cd build && cmake ${{ inputs.cmake-flags }} ../git && make
+      run: > 
+        cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }} 
+        && mkdir -p build cache 
+        && cd build
+        && cmake -DCMAKE_INSTALL_PREFIX=../cache ${{ inputs.cmake-flags }} ../git 
+        && make 
+        && sudo make install
     - if: steps.restore.outputs.cache-hit != 'true'
       name: Save build to cache
       id: save
@@ -78,8 +84,8 @@ runs:
       env:
         cache-name: cache-${{ steps.latest-ref.outputs.repo-name }}
       with:
-        path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}
+        path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/cache
         key: ${{ steps.restore.outputs.cache-primary-key }}
     - name: Install 
       shell: bash
-      run: cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/build && sudo make install
+      run: cp -r $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/cache/* /usr/local/.
