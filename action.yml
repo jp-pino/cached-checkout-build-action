@@ -88,4 +88,4 @@ runs:
         key: ${{ steps.restore.outputs.cache-primary-key }}
     - name: Install 
       shell: bash
-      run: cp -r $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/cache/* /usr/local/.
+      run: sudo cp -r $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ inputs.ref }}/cache/* /usr/local/.
