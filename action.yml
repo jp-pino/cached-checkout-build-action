@@ -25,6 +25,9 @@ inputs:
   cmake-flags:
     description: 'Flags to pass to cmake on build'
     default: ''
+  build-flags:
+    description: 'Flags to pass to cmake --build on build'
+    default: ''
 outputs:
   cache-restore-hit:
     description: 'Whether the cache was hit or not on restore'
@@ -75,8 +78,7 @@ runs:
         && mkdir -p build cache 
         && cd build
         && cmake -DCMAKE_INSTALL_PREFIX=../cache ${{ inputs.cmake-flags }} ../git 
-        && make 
-        && sudo make install
+        && sudo cmake --build . --target install  ${{ inputs.build-flags }}
     - if: steps.restore.outputs.cache-hit != 'true'
       name: Save build to cache
       id: save
