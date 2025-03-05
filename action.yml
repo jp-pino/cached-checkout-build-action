@@ -27,6 +27,9 @@ inputs:
   pre-build-command:
     description: 'Command to run before building'
     default: ''
+  shell:
+    description: 'The shell to use for the build steps'
+    value: 'bash'
 outputs:
   cache-restore-hit:
     description: 'Whether the cache was hit or not on restore'
@@ -37,9 +40,6 @@ outputs:
   latest-ref:
     description: 'The latest ref of the repository (sha)'
     value: ${{ steps.latest-ref.outputs.latest-ref }}
-  shell:
-    description: 'The shell to use for the build steps'
-    value: 'bash'
 runs:
   using: "composite"
   steps:
