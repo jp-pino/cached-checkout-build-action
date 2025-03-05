@@ -37,12 +37,15 @@ outputs:
   latest-ref:
     description: 'The latest ref of the repository (sha)'
     value: ${{ steps.latest-ref.outputs.latest-ref }}
+  shell:
+    description: 'The shell to use for the build steps'
+    value: 'bash'
 runs:
   using: "composite"
   steps:
   - name: Validate chosen ref
     id: chosen-ref
-    shell: bash
+    shell: ${{ inputs.shell }}
     run: |
       if [ -z "${{ inputs.ref }}" ]; then
         echo "ref=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.default_branch' )" >> $GITHUB_OUTPUT
@@ -52,7 +55,7 @@ runs:
       cat $GITHUB_OUTPUT
   - name: Get latest ref
     id: latest-ref
-    shell: bash
+    shell: ${{ inputs.shell }}
     run: |
       remaining=`curl -i https://api.github.com/ --header "Authorization: token ${{ inputs.token }}" | grep x-ratelimit-remaining` 2> /dev/null
       echo "Remaining requests: $remaining"
@@ -64,7 +67,7 @@ runs:
       echo "repo-name=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.name' )" >> $GITHUB_OUTPUT
       cat $GITHUB_OUTPUT
   - name: Check latest-ref
-    shell: bash
+    shell: ${{ inputs.shell }}
     run: |
       if [ "${{ steps.latest-ref.outputs.latest-ref }}" == "null" ]; then
         exit 1
@@ -87,7 +90,7 @@ runs:
       token: ${{ inputs.token }}
   - if: steps.restore.outputs.cache-hit != 'true'
     name: Build repo
-    shell: bash
+    shell: ${{ inputs.shell }}
     run: |
       ${{ inputs.pre-build-command }} ;
       cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}  && mkdir -p build cache  && cd build && cmake -DCMAKE_INSTALL_PREFIX=../cache ${{ inputs.cmake-flags }} ../git  && sudo cmake --build . --target install  ${{ inputs.build-flags }}
@@ -101,5 +104,5 @@ runs:
       path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/cache
       key: ${{ steps.restore.outputs.cache-primary-key }}
   - name: Install
-    shell: bash
+    shell: ${{ inputs.shell }}
     run: sudo cp -r $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/cache/* /usr/local/.
