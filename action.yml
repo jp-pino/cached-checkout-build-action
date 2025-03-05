@@ -45,7 +45,7 @@ runs:
   steps:
   - name: Validate chosen ref
     id: chosen-ref
-    shell: ${{ inputs.shell }}
+    shell: bash
     run: |
       if [ -z "${{ inputs.ref }}" ]; then
         echo "ref=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.default_branch' )" >> $GITHUB_OUTPUT
@@ -55,7 +55,7 @@ runs:
       cat $GITHUB_OUTPUT
   - name: Get latest ref
     id: latest-ref
-    shell: ${{ inputs.shell }}
+    shell: bash
     run: |
       remaining=`curl -i https://api.github.com/ --header "Authorization: token ${{ inputs.token }}" | grep x-ratelimit-remaining` 2> /dev/null
       echo "Remaining requests: $remaining"
@@ -67,7 +67,7 @@ runs:
       echo "repo-name=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.name' )" >> $GITHUB_OUTPUT
       cat $GITHUB_OUTPUT
   - name: Check latest-ref
-    shell: ${{ inputs.shell }}
+    shell: bash
     run: |
       if [ "${{ steps.latest-ref.outputs.latest-ref }}" == "null" ]; then
         exit 1
