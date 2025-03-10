@@ -29,7 +29,7 @@ inputs:
     default: ''
   shell:
     description: 'The shell to use for the build steps'
-    value: 'bash'
+    default: 'bash'
 outputs:
   cache-restore-hit:
     description: 'Whether the cache was hit or not on restore'
