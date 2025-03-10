@@ -92,7 +92,7 @@ runs:
     name: Build repo
     shell: bash
     run: |
-      sudo ${{ inputs.shell }} -c '${{ inputs.pre-build-command || ':' }} && cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }} && mkdir -p git/build cache && cd git/build && cmake -DCMAKE_INSTALL_PREFIX=../../cache ${{ inputs.cmake-flags }} .. && cmake --build . --target install  ${{ inputs.build-flags }}'
+      env | sudo ${{ inputs.shell }} -c 'source /dev/stdin; ${{ inputs.pre-build-command || ':' }} && cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }} && mkdir -p git/build cache && cd git/build && cmake -DCMAKE_INSTALL_PREFIX=../../cache ${{ inputs.cmake-flags }} .. && cmake --build . --target install  ${{ inputs.build-flags }}'
   - if: steps.restore.outputs.cache-hit != 'true'
     name: Save build to cache
     id: save
