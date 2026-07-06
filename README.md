@@ -26,16 +26,13 @@ Cached checkout and build action for GitHub workflows
     # Default: ${{ github.token }}
     token: ''
 
-    # Space-separated list of submodule paths to initialize after checkout.
-    # SSH submodule URLs (git@github.com:...) are rewritten to HTTPS and fetched
-    # with `submodules-token`. Leave empty to skip submodule initialization.
-    submodules: ''
-
-    # Personal access token (PAT) used to fetch the submodules. Useful when the
-    # submodules live in private repositories the main `token` cannot read.
+    # Whether to checkout submodules: `true` to checkout submodules or `recursive`
+    # to recursively checkout submodules. Passed straight through to
+    # actions/checkout, which fetches them with the same token (SSH URLs are
+    # rewritten to HTTPS).
     #
-    # Default: the same token used for the main checkout
-    submodules-token: ''
+    # Default: false
+    submodules: ''
 
     # Flags to pass to cmake on build
     cmake-flags: ''

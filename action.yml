@@ -20,12 +20,8 @@ inputs:
     default: ${{ github.token }}
   submodules:
     description: >
-      Space-separated list of submodule paths to initialize after checkout. SSH submodule URLs (git@github.com:...) are rewritten to HTTPS and fetched with the submodules-token. Leave empty to skip submodule initialization.
-    default: ''
-  submodules-token:
-    description: >
-      Personal access token (PAT) used to fetch the submodules. Defaults to the same token used for the main checkout.
-    default: ''
+      Whether to checkout submodules: `true` to checkout submodules or `recursive` to recursively checkout submodules. Passed straight through to actions/checkout, which fetches them with the same token (SSH URLs are rewritten to HTTPS).
+    default: 'false'
   cmake-flags:
     description: 'Flags to pass to cmake on build'
     default: ''
@@ -96,19 +92,7 @@ runs:
       ref: ${{ steps.chosen-ref.outputs.ref }}
       path: ${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/git
       token: ${{ inputs.token }}
-      # Don't persist the checkout token's auth header in the repo's git
-      # config: it would take precedence over the submodules-token when the
-      # submodules are fetched below.
-      persist-credentials: false
-  - if: steps.restore.outputs.cache-hit != 'true' && inputs.submodules != ''
-    name: Fetch submodules
-    shell: bash
-    env:
-      SUBMODULES_TOKEN: ${{ inputs.submodules-token || inputs.token }}
-    run: >
-      git -C $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/git
-      -c "url.https://x-access-token:${SUBMODULES_TOKEN}@github.com/.insteadOf=git@github.com:"
-      submodule update --init ${{ inputs.submodules }}
+      submodules: ${{ inputs.submodules }}
   - if: steps.restore.outputs.cache-hit != 'true'
     name: Build repo
     shell: bash
