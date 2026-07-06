@@ -3,7 +3,7 @@ Cached checkout and build action for GitHub workflows
 
 ## Usage
 ```yaml
-- uses: jp-pino/cached-checkout-build-action@v1
+- uses: jp-pino/cached-checkout-build-action@v4
   with:
     # Repository name with owner. For example, actions/checkout
     # Default: ${{ github.repository }}
@@ -25,7 +25,18 @@ Cached checkout and build action for GitHub workflows
     #
     # Default: ${{ github.token }}
     token: ''
-    
+
+    # Space-separated list of submodule paths to initialize after checkout.
+    # SSH submodule URLs (git@github.com:...) are rewritten to HTTPS and fetched
+    # with `submodules-token`. Leave empty to skip submodule initialization.
+    submodules: ''
+
+    # Personal access token (PAT) used to fetch the submodules. Useful when the
+    # submodules live in private repositories the main `token` cannot read.
+    #
+    # Default: the same token used for the main checkout
+    submodules-token: ''
+
     # Flags to pass to cmake on build
     cmake-flags: ''
 ```
