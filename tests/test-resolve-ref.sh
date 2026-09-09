@@ -5,7 +5,8 @@ set -u
 
 export PATH="$TESTS_DIR/mock:$PATH"
 export GITHUB_API_URL="https://api.github.com" GITHUB_SERVER_URL="https://github.com"
-export INPUT_TOKEN="t0ken"
+export INPUT_TOKEN="t0ken" INPUT_GITHUB_TOKEN="wf-token"
+unset MOCK_API_DENY_TOKEN
 unset GITHUB_REPOSITORY GITHUB_SHA GITHUB_REF GITHUB_HEAD_REF GITHUB_EVENT_PATH INPUT_REF INPUT_DEPENDENCY_OVERRIDES
 unset CACHED_BUILD_DEPENDENCY_OVERRIDES CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE
 
@@ -252,6 +253,33 @@ assert_contains "text cached" "$DEPENDS_LINE" "$(env_out CACHED_BUILD_DEPENDENCY
 assert_not_contains "no warning" "::warning::" "$OUT"
 unset GITHUB_EVENT_PATH
 
+echo "# auto: the lookup uses github-token, the dependency fetch uses token"
+new_case; setup_api
+setup_pr_list "[{\"number\":1074,\"body\":\"$DEPENDS_LINE\"}]"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "auth headers in order" $'Authorization: token wf-token\nAuthorization: token t0ken' "$(grep Authorization "$MOCK_API_HEADERS")"
+
+echo "# auto: github-token refused -> retried with token"
+new_case; setup_api
+setup_pr_list "[{\"number\":1074,\"body\":\"$DEPENDS_LINE\"}]"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion MOCK_API_DENY_TOKEN=wf-token run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref" refs/pull/424/head "$(out ref)"
+assert_eq "lookup twice + PR head" 3 "$(api_calls)"
+assert_not_contains "no warning" "::warning::" "$OUT"
+
+echo "# auto: no github-token -> token is used directly, once"
+new_case; setup_api
+setup_pr_list "[{\"number\":1074,\"body\":\"$DEPENDS_LINE\"}]"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto INPUT_GITHUB_TOKEN='' \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion run
+assert_eq "ref" refs/pull/424/head "$(out ref)"
+assert_eq "lookup once + PR head" 2 "$(api_calls)"
+assert_eq "dependency token used" 2 "$(grep -c 'Authorization: token t0ken' "$MOCK_API_HEADERS")"
+
 echo "# auto: 'AUTO ' is accepted, GITHUB_HEAD_REF wins over GITHUB_REF"
 new_case; setup_api
 setup_pr_list "[{\"number\":1074,\"body\":\"$DEPENDS_LINE\"}]"
@@ -298,7 +326,7 @@ CACHED_BUILD_DEPENDENCY_OVERRIDES='' CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE='n
 assert_eq "cached empty outcome -> no lookup" 1 "$(api_calls)"
 assert_eq "not overridden" false "$(out ref-overridden)"
 
-echo "# auto: lookup denied -> warning, no override, outcome cached"
+echo "# auto: lookup denied for both tokens -> warning, no override, outcome cached"
 new_case; setup_api
 setup_pr_list '{"message":"Resource not accessible by integration"}'
 echo 403 > "$(lookup_file).status"
@@ -308,7 +336,8 @@ assert_status "exits 0" 0 "$RC"
 assert_eq "ref kept" main "$(out ref)"
 assert_contains "warns" "::warning::Could not look up the open pull request for branch 'rust_conversion'" "$OUT"
 assert_contains "names the cause" "Resource not accessible by integration" "$OUT"
-assert_contains "hints at the permission" "pull-requests: read" "$OUT"
+assert_contains "hints at the permission" "github-token (or token) needs pull-requests: read access to BluEye-Robotics/p2_drone" "$OUT"
+assert_eq "both tokens tried, then no more" 3 "$(api_calls)"
 assert_contains "outcome cached" "lookup for branch 'rust_conversion' failed" "$(env_out CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE)"
 
 echo "# auto: tag push -> no lookup"

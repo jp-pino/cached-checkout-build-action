@@ -5,6 +5,9 @@
 #   INPUT_REPOSITORY            owner/repo (required)
 #   INPUT_REF                   branch, tag, SHA or "" (default branch / event SHA)
 #   INPUT_TOKEN                 token for the GitHub API (optional for public repos)
+#   INPUT_GITHUB_TOKEN          token for the repository running the workflow,
+#                               used for the "auto" pull request lookup (falls
+#                               back to INPUT_TOKEN when refused)
 #   INPUT_DEPENDENCY_OVERRIDES  free text (typically the PR body) scanned for
 #                               "Depends on <url>" lines that swap the ref, or
 #                               "auto" to take the description of the pull
@@ -28,6 +31,7 @@ set -euo pipefail
 : "${INPUT_REPOSITORY:?INPUT_REPOSITORY is required}"
 INPUT_REF="$(trim "${INPUT_REF:-}")"
 INPUT_TOKEN="${INPUT_TOKEN:-}"
+INPUT_GITHUB_TOKEN="${INPUT_GITHUB_TOKEN:-}"
 INPUT_DEPENDENCY_OVERRIDES="${INPUT_DEPENDENCY_OVERRIDES:-}"
 GITHUB_API_URL="${GITHUB_API_URL:-https://api.github.com}"
 GITHUB_SERVER_URL="${GITHUB_SERVER_URL:-https://github.com}"
@@ -39,12 +43,12 @@ name="$(repo_name "$repository")"
 server_host="${GITHUB_SERVER_URL#*://}"
 server_host="${server_host%/}"
 
-# api_raw <path> <bodyfile>: GET $GITHUB_API_URL/<path> into <bodyfile> and
-# print the HTTP status ("000" when curl itself failed). Never exits.
+# api_raw <path> <bodyfile> [token]: GET $GITHUB_API_URL/<path> into <bodyfile>
+# and print the HTTP status ("000" when curl itself failed). Never exits.
 api_raw() {
-  local path="$1" body="$2" status
+  local path="$1" body="$2" token="${3-$INPUT_TOKEN}" status
   local -a auth=()
-  [ -n "$INPUT_TOKEN" ] && auth=(-H "Authorization: token $INPUT_TOKEN")
+  [ -n "$token" ] && auth=(-H "Authorization: token $token")
   status="$(curl -sS -o "$body" -w '%{http_code}' \
     -H 'Accept: application/vnd.github+json' "${auth[@]}" \
     "$GITHUB_API_URL/$path")" || status=000
@@ -120,7 +124,13 @@ if [ "$(lower "$(trim "$INPUT_DEPENDENCY_OVERRIDES")")" = auto ]; then
       owner="${GITHUB_REPOSITORY%%/*}"
       path="repos/$GITHUB_REPOSITORY/pulls?state=open&head=$(urlencode_ref "$owner:$branch")&per_page=5"
       body_file="$(mktemp)"
-      status="$(api_raw "$path" "$body_file")"
+      # The workflow's own token can always see its own pull requests; the
+      # dependency token is often scoped to other repositories, so it is only
+      # the fallback.
+      status="$(api_raw "$path" "$body_file" "$INPUT_GITHUB_TOKEN")"
+      if [[ "$status" != 2* ]] && [ -n "$INPUT_TOKEN" ] && [ "$INPUT_TOKEN" != "$INPUT_GITHUB_TOKEN" ]; then
+        status="$(api_raw "$path" "$body_file" "$INPUT_TOKEN")"
+      fi
       if [[ "$status" == 2* ]]; then
         count="$(jq -r 'if type == "array" then length else 0 end' "$body_file")"
         if [ "$count" -gt 0 ]; then
@@ -134,7 +144,7 @@ if [ "$(lower "$(trim "$INPUT_DEPENDENCY_OVERRIDES")")" = auto ]; then
           overrides_from="nothing: branch '$branch' has no open pull request"
         fi
       else
-        warn "Could not look up the open pull request for branch '$branch'; dependency overrides are disabled for this job. $(api_error "$path" "$body_file" "$status") The token needs pull-requests: read access, or set dependency-overrides explicitly."
+        warn "Could not look up the open pull request for branch '$branch'; dependency overrides are disabled for this job. $(api_error "$path" "$body_file" "$status") github-token (or token) needs pull-requests: read access to ${GITHUB_REPOSITORY}, or set dependency-overrides explicitly."
         overrides_from="nothing: the pull request lookup for branch '$branch' failed"
       fi
       rm -f "$body_file"

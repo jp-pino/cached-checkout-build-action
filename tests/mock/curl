@@ -2,13 +2,16 @@
 # Minimal curl stand-in for tests. Understands: -s -S -o FILE -w FMT -H HDR URL.
 # Serves $MOCK_API_DIR/<path with / replaced by __>.json with an optional
 # .status file (default 200). Appends each requested path to $MOCK_API_LOG.
+# Requests authenticated with $MOCK_API_DENY_TOKEN get a 403 instead.
 set -euo pipefail
-out=/dev/stdout; wfmt=""; url=""
+out=/dev/stdout; wfmt=""; url=""; token=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
     -w) wfmt="$2"; shift 2 ;;
-    -H) echo "$2" >> "${MOCK_API_HEADERS:-/dev/null}"; shift 2 ;;
+    -H) echo "$2" >> "${MOCK_API_HEADERS:-/dev/null}"
+        case "$2" in "Authorization: token "*) token="${2#Authorization: token }" ;; esac
+        shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
@@ -16,7 +19,10 @@ done
 path="${url#"${GITHUB_API_URL:-https://api.github.com}"/}"
 echo "$path" >> "${MOCK_API_LOG:-/dev/null}"
 file="$MOCK_API_DIR/$(printf '%s' "$path" | sed 's#/#__#g')"
-if [ -f "$file.json" ]; then
+if [ -n "${MOCK_API_DENY_TOKEN:-}" ] && [ "$token" = "$MOCK_API_DENY_TOKEN" ]; then
+  status=403
+  printf '{"message":"Resource not accessible by personal access token (mock: %s)"}' "$path" > "$out"
+elif [ -f "$file.json" ]; then
   status=200
   [ -f "$file.status" ] && status="$(cat "$file.status")"
   cat "$file.json" > "$out"

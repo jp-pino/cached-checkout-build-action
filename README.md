@@ -26,6 +26,11 @@ dependencies at a branch or pull request with a `Depends on …` line in their d
     # Default: ${{ github.token }}
     token: ''
 
+    # Token for the repository running the workflow, used only by
+    # `dependency-overrides: auto` to look up the branch's open pull request.
+    # Default: ${{ github.token }}
+    github-token: ''
+
     # Whether to checkout submodules: `true` to checkout submodules or `recursive`
     # to recursively checkout submodules. Passed straight through to
     # actions/checkout, which fetches them with the same token.
@@ -188,8 +193,9 @@ Details:
   whose head is the current branch, so a workflow that only runs `on: [push]` gets the same
   overrides. The lookup happens once per job and is shared by every step of the action; its outcome
   is printed by the "Resolve repository, ref and commit" step. A branch with several open pull
-  requests uses the most recently created one and warns. If the token cannot list pull requests (the
-  default `GITHUB_TOKEN` needs `pull-requests: read`), the step warns and nothing is overridden.
+  requests uses the most recently created one and warns. The lookup uses `github-token` (the
+  workflow's own token, which needs `pull-requests: read`) and falls back to `token`; if both are
+  refused, the step warns and nothing is overridden.
 - To take the text from somewhere else, set `dependency-overrides` explicitly, for example to the head
   commit message. Set it to `''` to disable the feature for a step.
 - Pull request heads are fetched from the base repository, so a pull request from a fork works too

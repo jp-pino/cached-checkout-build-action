@@ -25,6 +25,13 @@ inputs:
 
       [Learn more about creating and using encrypted secrets](https://help.github.com/en/actions/automating-your-workflow-with-github-actions/creating-and-using-encrypted-secrets)
     default: ${{ github.token }}
+  github-token:
+    description: >
+      Token for the repository running the workflow. Only used by `dependency-overrides: auto` to look
+      up the open pull request for the current branch on events other than pull_request. Defaults to
+      the workflow's own token, which sees its own pull requests; `token` is tried next when this one is
+      refused.
+    default: ${{ github.token }}
   submodules:
     description: >
       Whether to checkout submodules: `true` to checkout submodules or `recursive` to recursively
@@ -57,8 +64,8 @@ inputs:
       (`owner/repo#123` and `owner/repo@branch` also work). A matching line replaces `ref` for this
       step; links to other repositories are ignored. The default, `auto`, scans the description of the
       pull request that triggered the workflow or, on other events such as push, of the open pull
-      request for the current branch (looked up once per job; needs pull-requests read access on the
-      token). Set to '' to disable.
+      request for the current branch (looked up once per job with `github-token`). Set to '' to
+      disable.
     default: auto
   cache-key-extra:
     description: >
@@ -111,6 +118,7 @@ runs:
       INPUT_REPOSITORY: ${{ inputs.repository }}
       INPUT_REF: ${{ inputs.ref }}
       INPUT_TOKEN: ${{ inputs.token }}
+      INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
       INPUT_DEPENDENCY_OVERRIDES: ${{ inputs.dependency-overrides }}
     run: ${{ github.action_path }}/scripts/resolve-ref.sh
 
