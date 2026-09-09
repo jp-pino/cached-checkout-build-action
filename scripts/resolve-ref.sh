@@ -46,7 +46,8 @@ server_host="${server_host%/}"
 # api_raw <path> <bodyfile> [token]: GET $GITHUB_API_URL/<path> into <bodyfile>
 # and print the HTTP status ("000" when curl itself failed). Never exits.
 api_raw() {
-  local path="$1" body="$2" token="${3-$INPUT_TOKEN}" status
+  local path="$1" body="$2" token="$INPUT_TOKEN" status
+  if [ $# -ge 3 ]; then token="$3"; fi
   local -a auth=()
   [ -n "$token" ] && auth=(-H "Authorization: token $token")
   status="$(curl -sS -o "$body" -w '%{http_code}' \
@@ -127,8 +128,9 @@ if [ "$(lower "$(trim "$INPUT_DEPENDENCY_OVERRIDES")")" = auto ]; then
       # The workflow's own token can always see its own pull requests; the
       # dependency token is often scoped to other repositories, so it is only
       # the fallback.
-      status="$(api_raw "$path" "$body_file" "$INPUT_GITHUB_TOKEN")"
-      if [[ "$status" != 2* ]] && [ -n "$INPUT_TOKEN" ] && [ "$INPUT_TOKEN" != "$INPUT_GITHUB_TOKEN" ]; then
+      lookup_token="${INPUT_GITHUB_TOKEN:-$INPUT_TOKEN}"
+      status="$(api_raw "$path" "$body_file" "$lookup_token")"
+      if [[ "$status" != 2* ]] && [ -n "$INPUT_TOKEN" ] && [ "$INPUT_TOKEN" != "$lookup_token" ]; then
         status="$(api_raw "$path" "$body_file" "$INPUT_TOKEN")"
       fi
       if [[ "$status" == 2* ]]; then
