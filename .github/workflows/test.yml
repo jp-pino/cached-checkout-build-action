@@ -1,0 +1,184 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FMT_OLD: 11.0.2
+  FMT_NEW: 11.2.0
+  SPDLOG: v1.15.3
+
+jobs:
+  unit:
+    name: Unit tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: shellcheck scripts/*.sh tests/*.sh tests/mock/curl
+      - name: Unit tests
+        run: tests/run.sh
+      - name: resolve-ref against the live API
+        env:
+          INPUT_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected="$(gh api "repos/fmtlib/fmt/commits/$FMT_OLD" --jq .sha)"
+          out="$(mktemp)"
+
+          GITHUB_OUTPUT="$out" INPUT_REPOSITORY=fmtlib/fmt INPUT_REF="$FMT_OLD" scripts/resolve-ref.sh
+          grep -qx "sha=$expected" "$out" || { echo "tag: expected $expected"; cat "$out"; exit 1; }
+
+          pr="$(gh api 'repos/fmtlib/fmt/pulls?state=closed&per_page=1' --jq '.[0].number')"
+          pr_sha="$(gh api "repos/fmtlib/fmt/pulls/$pr" --jq .head.sha)"
+          : > "$out"
+          GITHUB_OUTPUT="$out" INPUT_REPOSITORY=fmtlib/fmt INPUT_REF=master \
+            INPUT_DEPENDENCY_OVERRIDES="Depends on https://github.com/fmtlib/fmt/pull/$pr" scripts/resolve-ref.sh
+          grep -qx "sha=$pr_sha" "$out" || { echo "pull: expected $pr_sha"; cat "$out"; exit 1; }
+          grep -qx "ref=refs/pull/$pr/head" "$out"
+          grep -qx "ref-overridden=true" "$out"
+          echo "live API resolution OK (tag $FMT_OLD, PR #$pr)"
+
+  build-chain:
+    name: Build fmt -> spdlog chain
+    runs-on: ubuntu-latest
+    outputs:
+      fmt-fingerprint: ${{ steps.fmt.outputs.fingerprint }}
+      spdlog-fingerprint: ${{ steps.spdlog.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build fmt
+        id: fmt
+        uses: ./
+        with:
+          repository: fmtlib/fmt
+          ref: ${{ env.FMT_OLD }}
+          cmake-flags: -DFMT_TEST=OFF -DFMT_DOC=OFF
+
+      - name: Build spdlog against fmt
+        id: spdlog
+        uses: ./
+        with:
+          repository: gabime/spdlog
+          ref: ${{ env.SPDLOG }}
+          depends-on: fmtlib/fmt
+          cmake-flags: -DSPDLOG_FMT_EXTERNAL=ON -DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF
+
+      - name: Consumer links against the installed chain
+        run: |
+          set -euo pipefail
+          cmake -S tests/fixtures/consumer -B "$RUNNER_TEMP/consumer"
+          cmake --build "$RUNNER_TEMP/consumer"
+          "$RUNNER_TEMP/consumer/consumer" | tee "$RUNNER_TEMP/consumer.out"
+          grep -q 'FMT_VERSION=110002' "$RUNNER_TEMP/consumer.out"
+
+      # A newer fmt built later in the job re-registers fmt, so spdlog's
+      # fingerprint must change even though spdlog's own inputs did not.
+      - name: Build newer fmt (alternative prefix)
+        id: fmt-new
+        uses: ./
+        with:
+          repository: fmtlib/fmt
+          ref: ${{ env.FMT_NEW }}
+          cmake-flags: -DFMT_TEST=OFF -DFMT_DOC=OFF
+          install-prefix: ${{ runner.temp }}/alt
+
+      - name: Build spdlog against the newer fmt (alternative prefix)
+        id: spdlog-new
+        uses: ./
+        with:
+          repository: gabime/spdlog
+          ref: ${{ env.SPDLOG }}
+          depends-on: fmt
+          cmake-flags: -DSPDLOG_FMT_EXTERNAL=ON -DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF
+          pre-build-command: export CMAKE_PREFIX_PATH=${{ runner.temp }}/alt
+          install-prefix: ${{ runner.temp }}/alt
+
+      - name: Ref swapped by a "Depends on" line
+        id: override
+        uses: ./
+        with:
+          repository: fmtlib/fmt
+          ref: ${{ env.FMT_OLD }}
+          cmake-flags: -DFMT_TEST=OFF -DFMT_DOC=OFF
+          dependency-overrides: |
+            Some PR description.
+
+            Depends on https://github.com/fmtlib/fmt/tree/${{ env.FMT_NEW }}
+            Depends on https://github.com/gabime/spdlog/pull/1
+          install-prefix: ${{ runner.temp }}/alt
+
+      - name: Assert fingerprints and overrides
+        env:
+          FMT_FP: ${{ steps.fmt.outputs.fingerprint }}
+          FMT_NEW_FP: ${{ steps.fmt-new.outputs.fingerprint }}
+          SPDLOG_FP: ${{ steps.spdlog.outputs.fingerprint }}
+          SPDLOG_NEW_FP: ${{ steps.spdlog-new.outputs.fingerprint }}
+          SPDLOG_OVERRIDDEN: ${{ steps.spdlog.outputs.ref-overridden }}
+          OVERRIDE_REF: ${{ steps.override.outputs.ref }}
+          OVERRIDE_FLAG: ${{ steps.override.outputs.ref-overridden }}
+          OVERRIDE_FP: ${{ steps.override.outputs.fingerprint }}
+          OVERRIDE_SHA: ${{ steps.override.outputs.latest-ref }}
+          FMT_NEW_SHA: ${{ steps.fmt-new.outputs.latest-ref }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [ -n "$FMT_FP" ] || fail "fmt fingerprint is empty"
+          [ "$FMT_FP" != "$FMT_NEW_FP" ] || fail "fmt fingerprint did not change with the ref"
+          [ "$SPDLOG_FP" != "$SPDLOG_NEW_FP" ] || fail "spdlog fingerprint did not change when its fmt dependency changed"
+          [ "$SPDLOG_OVERRIDDEN" = false ] || fail "spdlog ref unexpectedly overridden"
+          [ "$OVERRIDE_FLAG" = true ] || fail "override not applied"
+          [ "$OVERRIDE_REF" = "$FMT_NEW" ] || fail "override ref is '$OVERRIDE_REF', expected $FMT_NEW"
+          [ "$OVERRIDE_SHA" = "$FMT_NEW_SHA" ] || fail "override sha differs from the explicit $FMT_NEW build"
+          [ "$OVERRIDE_FP" = "$FMT_NEW_FP" ] || fail "override fingerprint differs from the explicit $FMT_NEW build"
+          echo "registry:"; printf '%s\n' "$CACHED_BUILD_REGISTRY"
+          echo "all assertions passed"
+
+  cache-hit:
+    name: Second job restores the chain from cache
+    needs: build-chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Restore fmt
+        id: fmt
+        uses: ./
+        with:
+          repository: fmtlib/fmt
+          ref: ${{ env.FMT_OLD }}
+          cmake-flags: -DFMT_TEST=OFF -DFMT_DOC=OFF
+      - name: Restore spdlog
+        id: spdlog
+        uses: ./
+        with:
+          repository: gabime/spdlog
+          ref: ${{ env.SPDLOG }}
+          depends-on: fmtlib/fmt
+          cmake-flags: -DSPDLOG_FMT_EXTERNAL=ON -DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF
+      - name: Assert cache hits and stable fingerprints
+        env:
+          FMT_HIT: ${{ steps.fmt.outputs.cache-hit }}
+          SPDLOG_HIT: ${{ steps.spdlog.outputs.cache-hit }}
+          FMT_FP: ${{ steps.fmt.outputs.fingerprint }}
+          SPDLOG_FP: ${{ steps.spdlog.outputs.fingerprint }}
+          FMT_FP_PREV: ${{ needs.build-chain.outputs.fmt-fingerprint }}
+          SPDLOG_FP_PREV: ${{ needs.build-chain.outputs.spdlog-fingerprint }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [ "$FMT_FP" = "$FMT_FP_PREV" ] || fail "fmt fingerprint changed between jobs"
+          [ "$SPDLOG_FP" = "$SPDLOG_FP_PREV" ] || fail "spdlog fingerprint changed between jobs"
+          [ "$FMT_HIT" = true ] || fail "fmt was not restored from cache"
+          [ "$SPDLOG_HIT" = true ] || fail "spdlog was not restored from cache"
+          test -f /usr/local/include/spdlog/spdlog.h || fail "spdlog header not installed from cache"
+          cmake -S tests/fixtures/consumer -B "$RUNNER_TEMP/consumer"
+          cmake --build "$RUNNER_TEMP/consumer"
+          "$RUNNER_TEMP/consumer/consumer"
