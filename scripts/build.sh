@@ -40,3 +40,11 @@ BUILD
 
 log "Building $SOURCE_PATH with $BUILD_SHELL (-j $BUILD_JOBS) into $INSTALL_PATH"
 run_privileged "$BUILD_SHELL" "$script"
+
+# A sudo build leaves root-owned files in the workspace, which later steps
+# (actions/checkout clean-up, cache save, rm -rf) cannot remove. Hand the
+# tree back to the runner user.
+if [ "$(id -u)" -ne 0 ] && [ -d "$(dirname "$SOURCE_PATH")" ]; then
+  run_privileged chown -R "$(id -u):$(id -g)" "$(dirname "$SOURCE_PATH")" \
+    || warn "could not chown the build tree back to $(id -un)"
+fi

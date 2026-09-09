@@ -92,8 +92,8 @@ dependencies at a branch or pull request with a `Depends on …` line in their d
 2. Compute a **fingerprint** from the commit, `cmake-flags`, `build-flags`, `pre-build-command`,
    `submodules`, `cache-key-extra` and the fingerprints of the builds named in `depends-on`.
    The cache key is `cached-build-<os>-<arch>-<repo>-<sha>-<fingerprint>`.
-3. Restore the install tree from the cache. On a miss, check out the sources under
-   `.cached-checkout-build/` in the workspace, run
+3. Restore the install tree from the cache. On a miss, remove any leftover work directory, check out
+   the sources under `.cached-checkout-build/` in the workspace, run
    `cmake <cmake-flags> && cmake --build . --target install -j <cpus> <build-flags>` in the
    requested shell, and save the install tree to the cache.
 4. Copy the install tree into `install-prefix` and run `ldconfig`.

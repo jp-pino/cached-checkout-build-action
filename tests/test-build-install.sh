@@ -57,6 +57,21 @@ else
   echo "# zsh not installed; skipping zsh case"
 fi
 
+echo "# prepare removes leftovers from an earlier build"
+new_case; setup_src
+mkdir -p "$SOURCE_PATH/build" "$INSTALL_PATH/include"
+touch "$SOURCE_PATH/build/CMakeCache.txt" "$INSTALL_PATH/include/stale.h"
+OUT="$("$SCRIPTS_DIR/prepare.sh" 2>&1)"; RC=$?
+assert_status "prepare exits 0" 0 "$RC"
+if [ ! -e "$SOURCE_PATH" ]; then pass "source tree removed"; else fail "source tree still exists"; fi
+if [ ! -e "$INSTALL_PATH" ]; then pass "install tree removed"; else fail "install tree still exists"; fi
+assert_file "parent directory exists for the checkout" "$(dirname "$SOURCE_PATH")"
+assert_contains "logs what it removed" "Removing leftover $SOURCE_PATH" "$OUT"
+new_case; export SOURCE_PATH="$CASE_DIR/none/git" INSTALL_PATH="$CASE_DIR/none/cache"
+OUT="$("$SCRIPTS_DIR/prepare.sh" 2>&1)"; RC=$?
+assert_status "prepare with nothing to remove exits 0" 0 "$RC"
+assert_not_contains "nothing logged" "Removing" "$OUT"
+
 echo "# install without a build tree fails clearly"
 new_case; export INSTALL_PATH="$CASE_DIR/missing" INSTALL_PREFIX="$CASE_DIR/prefix"
 run_install
