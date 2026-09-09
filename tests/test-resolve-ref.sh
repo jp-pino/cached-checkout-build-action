@@ -6,7 +6,8 @@ set -u
 export PATH="$TESTS_DIR/mock:$PATH"
 export GITHUB_API_URL="https://api.github.com" GITHUB_SERVER_URL="https://github.com"
 export INPUT_TOKEN="t0ken"
-unset GITHUB_REPOSITORY GITHUB_SHA INPUT_REF INPUT_DEPENDENCY_OVERRIDES
+unset GITHUB_REPOSITORY GITHUB_SHA GITHUB_REF GITHUB_HEAD_REF GITHUB_EVENT_PATH INPUT_REF INPUT_DEPENDENCY_OVERRIDES
+unset CACHED_BUILD_DEPENDENCY_OVERRIDES CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE
 
 SHA_MAIN=1111111111111111111111111111111111111111
 SHA_FEAT=2222222222222222222222222222222222222222
@@ -34,7 +35,20 @@ run() { # run -> sets RC, OUT
   OUT="$("$SCRIPTS_DIR/resolve-ref.sh" 2>&1)"; RC=$?
 }
 out() { output_value "$GITHUB_OUTPUT" "$1"; }
+env_out() { output_value "$GITHUB_ENV" "$1"; }
 api_calls() { grep -c . "$MOCK_API_LOG" || true; }
+
+# "auto" fixtures: the consumer repository p2_drone, branch rust_conversion.
+DEPENDS_LINE='Depends on https://github.com/BluEye-Robotics/libblunux/pull/424'
+LOOKUP_PATH='repos/BluEye-Robotics/p2_drone/pulls?state=open&head=BluEye-Robotics%3Arust_conversion&per_page=5'
+lookup_file() { printf '%s' "$MOCK_API_DIR/$(printf '%s' "$LOOKUP_PATH" | sed 's#/#__#g')"; }
+setup_pr_list() { # setup_pr_list <json array>
+  printf '%s' "$1" > "$(lookup_file).json"
+}
+setup_event() { # setup_event <json> -> exports GITHUB_EVENT_PATH
+  export GITHUB_EVENT_PATH="$CASE_DIR/event.json"
+  printf '%s' "$1" > "$GITHUB_EVENT_PATH"
+}
 
 echo "# explicit branch ref"
 new_case; setup_api
@@ -195,5 +209,131 @@ new_case; setup_api
 INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main \
 INPUT_DEPENDENCY_OVERRIDES='Depends on * https://github.com/BluEye-Robotics/libblunux/pull/424' run
 assert_eq "ref" refs/pull/424/head "$(out ref)"
+
+echo "# auto: pull_request event -> description from the event payload, no lookup"
+new_case; setup_api
+setup_event "{\"action\":\"synchronize\",\"pull_request\":{\"number\":1074,\"body\":\"Some text.\\n\\n$DEPENDS_LINE\\n\"}}"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/pull/1074/merge GITHUB_HEAD_REF=rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref" refs/pull/424/head "$(out ref)"
+assert_eq "overridden" true "$(out ref-overridden)"
+assert_eq "only the PR head was fetched" 1 "$(api_calls)"
+assert_contains "says where the text came from" "pull request #1074 (from the event)" "$OUT"
+assert_contains "text cached for later steps" "$DEPENDS_LINE" "$(env_out CACHED_BUILD_DEPENDENCY_OVERRIDES)"
+assert_contains "source cached for later steps" "pull request #1074" "$(env_out CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE)"
+unset GITHUB_EVENT_PATH
+
+echo "# auto: pull_request event with an empty description -> nothing"
+new_case; setup_api
+setup_event '{"pull_request":{"number":1074,"body":null}}'
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_HEAD_REF=rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref kept" main "$(out ref)"
+assert_eq "not overridden" false "$(out ref-overridden)"
+assert_eq "no lookup" 1 "$(api_calls)"
+unset GITHUB_EVENT_PATH
+
+echo "# auto: push event -> open pull request for the branch is looked up"
+new_case; setup_api
+setup_event '{"ref":"refs/heads/rust_conversion","after":"0000000000000000000000000000000000000000"}'
+setup_pr_list "[{\"number\":1074,\"body\":\"Stacked on #1073.\\n\\n$DEPENDS_LINE\\n\"}]"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref" refs/pull/424/head "$(out ref)"
+assert_eq "sha" "$SHA_PR" "$(out sha)"
+assert_eq "overridden" true "$(out ref-overridden)"
+assert_contains "lookup path" "$LOOKUP_PATH" "$(cat "$MOCK_API_LOG")"
+assert_eq "lookup + PR head" 2 "$(api_calls)"
+assert_contains "says which PR" "pull request #1074 (open for branch 'rust_conversion')" "$OUT"
+assert_contains "text cached" "$DEPENDS_LINE" "$(env_out CACHED_BUILD_DEPENDENCY_OVERRIDES)"
+assert_not_contains "no warning" "::warning::" "$OUT"
+unset GITHUB_EVENT_PATH
+
+echo "# auto: 'AUTO ' is accepted, GITHUB_HEAD_REF wins over GITHUB_REF"
+new_case; setup_api
+setup_pr_list "[{\"number\":1074,\"body\":\"$DEPENDS_LINE\"}]"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES='AUTO ' \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/other GITHUB_HEAD_REF=rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref" refs/pull/424/head "$(out ref)"
+
+echo "# auto: push with no open pull request -> nothing, outcome cached"
+new_case; setup_api
+setup_pr_list '[]'
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref kept" main "$(out ref)"
+assert_eq "not overridden" false "$(out ref-overridden)"
+assert_contains "explains" "no open pull request" "$OUT"
+assert_eq "empty text cached" "" "$(env_out CACHED_BUILD_DEPENDENCY_OVERRIDES)"
+assert_contains "outcome cached" "no open pull request" "$(env_out CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE)"
+
+echo "# auto: several open pull requests -> first one, with a warning"
+new_case; setup_api
+setup_pr_list "[{\"number\":1074,\"body\":\"$DEPENDS_LINE\"},{\"number\":1070,\"body\":\"Depends on https://github.com/BluEye-Robotics/libblunux/pull/7\"}]"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "first PR used" refs/pull/424/head "$(out ref)"
+assert_contains "warns" "::warning::Branch 'rust_conversion' has 2 open pull requests (#1074, #1070)" "$OUT"
+
+echo "# auto: a later step reuses the cached lookup, no API call"
+new_case; setup_api
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion \
+CACHED_BUILD_DEPENDENCY_OVERRIDES="$DEPENDS_LINE" CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE='the description of pull request #1074 (open for branch '"'"'rust_conversion'"'"')' run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref" refs/pull/424/head "$(out ref)"
+assert_eq "only the PR head was fetched" 1 "$(api_calls)"
+assert_contains "repeats the source" "pull request #1074" "$OUT"
+assert_eq "nothing re-written to GITHUB_ENV" "" "$(cat "$GITHUB_ENV")"
+new_case; setup_api
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion \
+CACHED_BUILD_DEPENDENCY_OVERRIDES='' CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE='nothing: branch has no open pull request' run
+assert_eq "cached empty outcome -> no lookup" 1 "$(api_calls)"
+assert_eq "not overridden" false "$(out ref-overridden)"
+
+echo "# auto: lookup denied -> warning, no override, outcome cached"
+new_case; setup_api
+setup_pr_list '{"message":"Resource not accessible by integration"}'
+echo 403 > "$(lookup_file).status"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/heads/rust_conversion run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref kept" main "$(out ref)"
+assert_contains "warns" "::warning::Could not look up the open pull request for branch 'rust_conversion'" "$OUT"
+assert_contains "names the cause" "Resource not accessible by integration" "$OUT"
+assert_contains "hints at the permission" "pull-requests: read" "$OUT"
+assert_contains "outcome cached" "lookup for branch 'rust_conversion' failed" "$(env_out CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE)"
+
+echo "# auto: tag push -> no lookup"
+new_case; setup_api
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_REF=refs/tags/v1.0 run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref kept" main "$(out ref)"
+assert_eq "no lookup" 1 "$(api_calls)"
+assert_contains "explains" "not running for a branch (refs/tags/v1.0)" "$OUT"
+
+echo "# auto: outside GitHub Actions -> no lookup, no error"
+new_case; setup_api
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES=auto run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref kept" main "$(out ref)"
+assert_eq "no lookup" 1 "$(api_calls)"
+
+echo "# explicit '' disables even when the event carries a description"
+new_case; setup_api
+setup_event "{\"pull_request\":{\"number\":1074,\"body\":\"$DEPENDS_LINE\"}}"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main INPUT_DEPENDENCY_OVERRIDES='' \
+GITHUB_REPOSITORY=BluEye-Robotics/p2_drone GITHUB_HEAD_REF=rust_conversion run
+assert_eq "not overridden" false "$(out ref-overridden)"
+assert_eq "nothing written to GITHUB_ENV" "" "$(cat "$GITHUB_ENV")"
+unset GITHUB_EVENT_PATH
 
 report

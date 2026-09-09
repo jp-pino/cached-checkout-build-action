@@ -6,11 +6,21 @@
 #   INPUT_REF                   branch, tag, SHA or "" (default branch / event SHA)
 #   INPUT_TOKEN                 token for the GitHub API (optional for public repos)
 #   INPUT_DEPENDENCY_OVERRIDES  free text (typically the PR body) scanned for
-#                               "Depends on <url>" lines that swap the ref
-#   GITHUB_API_URL, GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_SHA
+#                               "Depends on <url>" lines that swap the ref, or
+#                               "auto" to take the description of the pull
+#                               request in the event payload or, outside
+#                               pull_request events, of the open pull request
+#                               for the current branch
+#   GITHUB_API_URL, GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_SHA,
+#   GITHUB_EVENT_PATH, GITHUB_HEAD_REF, GITHUB_REF
+#   CACHED_BUILD_DEPENDENCY_OVERRIDES, CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE
+#                               the "auto" lookup done by an earlier step
 #
 # Outputs (GITHUB_OUTPUT):
 #   repository, repo-name, ref, sha, ref-overridden, override-source
+#
+# Environment (GITHUB_ENV, only with "auto"):
+#   CACHED_BUILD_DEPENDENCY_OVERRIDES, CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -29,24 +39,40 @@ name="$(repo_name "$repository")"
 server_host="${GITHUB_SERVER_URL#*://}"
 server_host="${server_host%/}"
 
-# api <path>: GET $GITHUB_API_URL/<path>, print the body, fail loudly on non-2xx.
-api() {
-  local path="$1" body status
-  body="$(mktemp)"
+# api_raw <path> <bodyfile>: GET $GITHUB_API_URL/<path> into <bodyfile> and
+# print the HTTP status ("000" when curl itself failed). Never exits.
+api_raw() {
+  local path="$1" body="$2" status
   local -a auth=()
   [ -n "$INPUT_TOKEN" ] && auth=(-H "Authorization: token $INPUT_TOKEN")
   status="$(curl -sS -o "$body" -w '%{http_code}' \
     -H 'Accept: application/vnd.github+json' "${auth[@]}" \
-    "$GITHUB_API_URL/$path")" || { rm -f "$body"; die "GitHub API request failed: $path"; }
+    "$GITHUB_API_URL/$path")" || status=000
+  printf '%s' "$status"
+}
+
+# api_error <path> <bodyfile> <status>: one line explaining a failed request.
+api_error() {
+  local path="$1" body="$2" status="$3" msg
+  msg="$(jq -r '.message // empty' "$body" 2>/dev/null || true)"
+  case "$status" in
+    000)     printf 'GitHub API request failed: %s' "$path" ;;
+    403|429) printf 'GitHub API %s returned HTTP %s (%s). Check the token'"'"'s access or the API rate limit.' "$path" "$status" "${msg:-no message}" ;;
+    404)     printf 'GitHub API %s returned HTTP 404 (%s). Does the token have access to %s and does the ref exist?' "$path" "${msg:-not found}" "$repository" ;;
+    *)       printf 'GitHub API %s returned HTTP %s (%s).' "$path" "$status" "${msg:-no message}" ;;
+  esac
+}
+
+# api <path>: GET $GITHUB_API_URL/<path>, print the body, fail loudly on non-2xx.
+api() {
+  local path="$1" body status
+  body="$(mktemp)"
+  status="$(api_raw "$path" "$body")"
   if [[ "$status" != 2* ]]; then
     local msg
-    msg="$(jq -r '.message // empty' "$body" 2>/dev/null || true)"
+    msg="$(api_error "$path" "$body" "$status")"
     rm -f "$body"
-    case "$status" in
-      403|429) die "GitHub API $path returned HTTP $status (${msg:-no message}). Check the token's access or the API rate limit." ;;
-      404)     die "GitHub API $path returned HTTP 404 (${msg:-not found}). Does the token have access to $repository and does the ref exist?" ;;
-      *)       die "GitHub API $path returned HTTP $status (${msg:-no message})." ;;
-    esac
+    die "$msg"
   fi
   cat "$body"
   rm -f "$body"
@@ -69,6 +95,57 @@ commit_sha() { # commit_sha <ref>
 }
 
 is_full_sha() { [[ "$1" =~ ^[0-9a-fA-F]{40}$ ]]; }
+
+# ---------------------------------------------------------------------------
+# 0. dependency-overrides "auto": find the pull request description.
+# ---------------------------------------------------------------------------
+# pull_request events carry the description in the event payload. On other
+# events (push, workflow_dispatch, ...) the open pull request whose head is the
+# current branch is looked up through the API. Either way the result is stored
+# in GITHUB_ENV, so a job that builds several repositories resolves it once.
+if [ "$(lower "$(trim "$INPUT_DEPENDENCY_OVERRIDES")")" = auto ]; then
+  overrides_from=""
+  if [ -n "${CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE:-}" ]; then
+    INPUT_DEPENDENCY_OVERRIDES="${CACHED_BUILD_DEPENDENCY_OVERRIDES:-}"
+    overrides_from="$CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE"
+  else
+    INPUT_DEPENDENCY_OVERRIDES=""
+    event_file="${GITHUB_EVENT_PATH:-}"
+    branch="${GITHUB_HEAD_REF:-}"
+    if [ -z "$branch" ] && [[ "${GITHUB_REF:-}" == refs/heads/* ]]; then branch="${GITHUB_REF#refs/heads/}"; fi
+    if [ -n "$event_file" ] && [ -f "$event_file" ] && jq -e '.pull_request.number' "$event_file" >/dev/null 2>&1; then
+      INPUT_DEPENDENCY_OVERRIDES="$(jq -r '.pull_request.body // empty' "$event_file")"
+      overrides_from="the description of pull request #$(jq -r '.pull_request.number' "$event_file") (from the event)"
+    elif [ -n "$branch" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+      owner="${GITHUB_REPOSITORY%%/*}"
+      path="repos/$GITHUB_REPOSITORY/pulls?state=open&head=$(urlencode_ref "$owner:$branch")&per_page=5"
+      body_file="$(mktemp)"
+      status="$(api_raw "$path" "$body_file")"
+      if [[ "$status" == 2* ]]; then
+        count="$(jq -r 'if type == "array" then length else 0 end' "$body_file")"
+        if [ "$count" -gt 0 ]; then
+          number="$(jq -r '.[0].number' "$body_file")"
+          INPUT_DEPENDENCY_OVERRIDES="$(jq -r '.[0].body // empty' "$body_file")"
+          overrides_from="the description of pull request #$number (open for branch '$branch')"
+          if [ "$count" -gt 1 ]; then
+            warn "Branch '$branch' has $count open pull requests ($(jq -r '[.[].number | "#\(.)"] | join(", ")' "$body_file")); dependency overrides come from #$number"
+          fi
+        else
+          overrides_from="nothing: branch '$branch' has no open pull request"
+        fi
+      else
+        warn "Could not look up the open pull request for branch '$branch'; dependency overrides are disabled for this job. $(api_error "$path" "$body_file" "$status") The token needs pull-requests: read access, or set dependency-overrides explicitly."
+        overrides_from="nothing: the pull request lookup for branch '$branch' failed"
+      fi
+      rm -f "$body_file"
+    else
+      overrides_from="nothing: not running for a branch (${GITHUB_REF:-GITHUB_REF is unset})"
+    fi
+    set_env CACHED_BUILD_DEPENDENCY_OVERRIDES "$INPUT_DEPENDENCY_OVERRIDES"
+    set_env CACHED_BUILD_DEPENDENCY_OVERRIDES_SOURCE "$overrides_from"
+  fi
+  log "dependency-overrides: $overrides_from"
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Scan the dependency-overrides text for "Depends on ..." lines.

@@ -55,9 +55,11 @@ inputs:
       Text scanned for lines starting with `Depends on` followed by a link to this repository, such as
       `Depends on https://github.com/owner/repo/tree/branch`, `.../pull/123` or `.../commit/sha`
       (`owner/repo#123` and `owner/repo@branch` also work). A matching line replaces `ref` for this
-      step; links to other repositories are ignored. Defaults to the pull request description, so it
-      is empty (and does nothing) outside pull_request events. Set to '' to disable.
-    default: ${{ github.event.pull_request.body }}
+      step; links to other repositories are ignored. The default, `auto`, scans the description of the
+      pull request that triggered the workflow or, on other events such as push, of the open pull
+      request for the current branch (looked up once per job; needs pull-requests read access on the
+      token). Set to '' to disable.
+    default: auto
   cache-key-extra:
     description: >
       Extra text mixed into the cache key. Change it to force a rebuild, or put something like a

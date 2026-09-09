@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read # the default dependency-overrides: auto lists open pull requests
 
 env:
   FMT_OLD: 11.0.2

@@ -53,9 +53,10 @@ dependencies at a branch or pull request with a `Depends on …` line in their d
     # See "Dependency chains".
     depends-on: ''
 
-    # Text scanned for `Depends on <link>` lines that replace `ref`.
-    # See "Overriding refs from a pull request description".
-    # Default: ${{ github.event.pull_request.body }}
+    # Text scanned for `Depends on <link>` lines that replace `ref`, or `auto`
+    # for the description of the pull request (from the event, or looked up for
+    # the pushed branch). See "Overriding refs from a pull request description".
+    # Default: auto
     dependency-overrides: ''
 
     # Extra text mixed into the cache key. Change it to force a rebuild, or put
@@ -162,8 +163,8 @@ Depends on https://github.com/BluEye-Robotics/libblunux/pull/424
 Depends on https://github.com/BluEye-Robotics/ProtocolDefinitions/tree/new-messages
 ```
 
-Each step of this action scans `dependency-overrides` (the pull request body by default) for lines
-starting with `Depends on` and, when a link points at the step's own `repository`, builds that
+Each step of this action scans `dependency-overrides` (the pull request description by default) for
+lines starting with `Depends on` and, when a link points at the step's own `repository`, builds that
 instead of `ref`:
 
 | Link | What is built |
@@ -182,9 +183,15 @@ Details:
   request is already merged or closed.
 - The swap changes the commit, so the cache key changes, and every build that `depends-on` it is
   rebuilt as well.
-- Outside `pull_request` events the default text is empty and nothing happens. To take the text from
-  somewhere else, set `dependency-overrides` explicitly, for example to the head commit message. Set
-  it to `''` to disable the feature for a step.
+- The default, `auto`, finds the description itself. On `pull_request` events it comes from the event
+  payload. On other events (`push`, `workflow_dispatch`) the action looks up the open pull request
+  whose head is the current branch, so a workflow that only runs `on: [push]` gets the same
+  overrides. The lookup happens once per job and is shared by every step of the action; its outcome
+  is printed by the "Resolve repository, ref and commit" step. A branch with several open pull
+  requests uses the most recently created one and warns. If the token cannot list pull requests (the
+  default `GITHUB_TOKEN` needs `pull-requests: read`), the step warns and nothing is overridden.
+- To take the text from somewhere else, set `dependency-overrides` explicitly, for example to the head
+  commit message. Set it to `''` to disable the feature for a step.
 - Pull request heads are fetched from the base repository, so a pull request from a fork works too
   and the fork itself is never contacted.
 
