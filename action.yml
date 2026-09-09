@@ -78,7 +78,7 @@ runs:
       fi
   - name: Restore build from cache
     id: restore
-    uses: actions/cache/restore@v3
+    uses: actions/cache/restore@v6
     env:
       cache-name: cache-${{ steps.latest-ref.outputs.repo-name }}
     with:
@@ -86,7 +86,7 @@ runs:
       key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ steps.latest-ref.outputs.latest-ref }}
   - if: steps.restore.outputs.cache-hit != 'true'
     name: Checkout repo
-    uses: actions/checkout@v4
+    uses: actions/checkout@v7
     with:
       repository: ${{ inputs.repository }}
       ref: ${{ steps.chosen-ref.outputs.ref }}
@@ -101,7 +101,7 @@ runs:
   - if: steps.restore.outputs.cache-hit != 'true'
     name: Save build to cache
     id: save
-    uses: actions/cache/save@v3
+    uses: actions/cache/save@v6
     env:
       cache-name: cache-${{ steps.latest-ref.outputs.repo-name }}
     with:
