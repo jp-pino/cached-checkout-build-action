@@ -17,14 +17,22 @@ env:
 
 jobs:
   unit:
-    name: Unit tests and lint
-    runs-on: ubuntu-latest
+    name: Unit tests and lint (${{ matrix.os }})
+    # macOS ships bash 3.2, the runners' Ubuntu bash 5: the scripts must work on both.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - name: shellcheck
+        if: runner.os == 'Linux'
         run: shellcheck scripts/*.sh tests/*.sh tests/mock/curl
       - name: Unit tests
-        run: tests/run.sh
+        run: |
+          bash --version | head -1
+          tests/run.sh
       - name: resolve-ref against the live API
         env:
           INPUT_TOKEN: ${{ github.token }}

@@ -222,6 +222,7 @@ Details:
 
 ```
 tests/run.sh          # unit tests for the scripts (needs bash, jq, cmake; zsh optional)
+                      # CI runs them on Ubuntu (bash 5) and macOS (bash 3.2)
 shellcheck scripts/*.sh tests/*.sh tests/mock/curl
 ```
 
