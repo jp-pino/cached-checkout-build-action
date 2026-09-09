@@ -1,112 +1,173 @@
-name: 'Cache checkout and build'
-description: 'Checkout a repo and cache build for faster installation next time'
+name: 'Cached checkout and build'
+description: >
+  Check out a CMake repository, build and install it, and cache the install tree keyed on the commit,
+  the build flags and the dependency chain built earlier in the job.
 inputs:
   repository:
     description: 'Repository name with owner. For example, actions/checkout'
     default: ${{ github.repository }}
   ref:
     description: >
-      The branch, tag or SHA to checkout. When checking out the repository that triggered a workflow, this defaults to the reference or SHA for that event.  Otherwise, uses the default branch.
+      The branch, tag or SHA to checkout. When checking out the repository that triggered a workflow,
+      this defaults to the SHA for that event. Otherwise, uses the default branch.
     default: ''
   token:
     description: >
-      Personal access token (PAT) used to fetch the repository. The PAT is configured with the local git config, which enables your scripts to run authenticated git commands. The post-job step removes the PAT.
+      Personal access token (PAT) used to fetch the repository and query the GitHub API. The PAT is
+      configured with the local git config, which enables your scripts to run authenticated git
+      commands. The post-job step removes the PAT.
 
 
-      We recommend using a service account with the least permissions necessary. Also when generating a new PAT, select the least scopes necessary.
+      We recommend using a service account with the least permissions necessary. Also when generating
+      a new PAT, select the least scopes necessary.
 
 
       [Learn more about creating and using encrypted secrets](https://help.github.com/en/actions/automating-your-workflow-with-github-actions/creating-and-using-encrypted-secrets)
     default: ${{ github.token }}
   submodules:
     description: >
-      Whether to checkout submodules: `true` to checkout submodules or `recursive` to recursively checkout submodules. Passed straight through to actions/checkout, which fetches them with the same token (SSH URLs are rewritten to HTTPS).
+      Whether to checkout submodules: `true` to checkout submodules or `recursive` to recursively
+      checkout submodules. Passed straight through to actions/checkout, which fetches them with the
+      same token (SSH URLs are rewritten to HTTPS).
     default: 'false'
   cmake-flags:
-    description: 'Flags to pass to cmake on build'
+    description: 'Flags to pass to cmake on configure. Evaluated as shell text, so quoting works: -DFOO="a b"'
     default: ''
   build-flags:
-    description: 'Flags to pass to cmake --build on build'
+    description: 'Flags to pass to cmake --build'
     default: ''
   pre-build-command:
-    description: 'Command to run before building'
+    description: 'Command to run in the build shell before configuring, e.g. source /opt/ros/jazzy/setup.zsh'
     default: ''
   shell:
-    description: 'The shell to use for the build steps'
+    description: 'The shell used to run pre-build-command and the build (bash, zsh, ...)'
     default: 'bash'
+  depends-on:
+    description: >
+      Dependencies of this build that were built earlier in the same job by this action, as a comma or
+      newline separated list of repository names (`owner/repo` or bare `repo`), or `all` for every
+      build registered so far in the job. The dependencies' fingerprints become part of this build's
+      cache key, so a dependency built from another commit or with other flags rebuilds this one too.
+    default: ''
+  dependency-overrides:
+    description: >
+      Text scanned for lines starting with `Depends on` followed by a link to this repository, such as
+      `Depends on https://github.com/owner/repo/tree/branch`, `.../pull/123` or `.../commit/sha`
+      (`owner/repo#123` and `owner/repo@branch` also work). A matching line replaces `ref` for this
+      step; links to other repositories are ignored. Defaults to the pull request description, so it
+      is empty (and does nothing) outside pull_request events. Set to '' to disable.
+    default: ${{ github.event.pull_request.body }}
+  cache-key-extra:
+    description: >
+      Extra text mixed into the cache key. Change it to force a rebuild, or put something like a
+      toolchain version in it so the cache follows it.
+    default: ''
+  install-prefix:
+    description: 'Where the built tree is installed after the build or cache restore'
+    default: '/usr/local'
+  sudo:
+    description: 'Run the build and the install as root (via sudo when the runner user is not root)'
+    default: 'true'
 outputs:
-  cache-restore-hit:
-    description: 'Whether the cache was hit or not on restore'
+  cache-hit:
+    description: 'Whether the build was restored from the cache (true) or built from source'
     value: ${{ steps.restore.outputs.cache-hit }}
-  cache-save-hit:
-    description: 'Whether the cache was hit or not on save'
-    value: ${{ steps.save.outputs.cache-hit }}
+  cache-restore-hit:
+    description: 'Alias of cache-hit, kept for compatibility'
+    value: ${{ steps.restore.outputs.cache-hit }}
+  cache-key:
+    description: 'The cache key used for this build'
+    value: ${{ steps.fingerprint.outputs.cache-key }}
+  fingerprint:
+    description: >
+      SHA-256 identifying this build: commit, flags and the fingerprints of its depends-on
+      dependencies. Use it in your own cache keys to depend on the whole chain.
+    value: ${{ steps.fingerprint.outputs.fingerprint }}
   latest-ref:
-    description: 'The latest ref of the repository (sha)'
-    value: ${{ steps.latest-ref.outputs.latest-ref }}
+    description: 'The commit SHA that was built'
+    value: ${{ steps.resolve.outputs.sha }}
+  ref:
+    description: 'The ref that was built, after any dependency override (e.g. refs/pull/123/head)'
+    value: ${{ steps.resolve.outputs.ref }}
+  ref-overridden:
+    description: 'true when a Depends on line in dependency-overrides replaced the ref'
+    value: ${{ steps.resolve.outputs.ref-overridden }}
+  source-path:
+    description: 'Absolute path of the checked out sources (only present on a cache miss)'
+    value: ${{ steps.fingerprint.outputs.source-path }}
+  install-path:
+    description: 'Absolute path of the install tree that was copied into install-prefix'
+    value: ${{ steps.fingerprint.outputs.install-path }}
 runs:
   using: "composite"
   steps:
-  - name: Validate chosen ref
-    id: chosen-ref
+  - name: Resolve repository, ref and commit
+    id: resolve
     shell: bash
-    run: |
-      if [ -z "${{ inputs.ref }}" ]; then
-        echo "ref=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.default_branch' )" >> $GITHUB_OUTPUT
-      else
-        echo "ref=${{ inputs.ref }}" >> $GITHUB_OUTPUT
-      fi
-      cat $GITHUB_OUTPUT
-  - name: Get latest ref
-    id: latest-ref
+    env:
+      INPUT_REPOSITORY: ${{ inputs.repository }}
+      INPUT_REF: ${{ inputs.ref }}
+      INPUT_TOKEN: ${{ inputs.token }}
+      INPUT_DEPENDENCY_OVERRIDES: ${{ inputs.dependency-overrides }}
+    run: ${{ github.action_path }}/scripts/resolve-ref.sh
+
+  - name: Compute fingerprint and cache key
+    id: fingerprint
     shell: bash
-    run: |
-      remaining=`curl -i https://api.github.com/ --header "Authorization: token ${{ inputs.token }}" | grep x-ratelimit-remaining` 2> /dev/null
-      echo "Remaining requests: $remaining"
-      if [ "$remaining" == "x-ratelimit-remaining: 0" ]; then
-        echo "Rate limit exceeded"
-        exit 1
-      fi
-      echo "latest-ref=$( curl -s https://api.github.com/repos/${{ inputs.repository }}/commits/${{ steps.chosen-ref.outputs.ref }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.sha' )" >> $GITHUB_OUTPUT
-      echo "repo-name=$( curl -s https://api.github.com/repos/${{ inputs.repository }} --header "Authorization: token ${{ inputs.token }}" | jq -r '.name' )" >> $GITHUB_OUTPUT
-      cat $GITHUB_OUTPUT
-  - name: Check latest-ref
-    shell: bash
-    run: |
-      if [ "${{ steps.latest-ref.outputs.latest-ref }}" == "null" ]; then
-        exit 1
-      fi
+    env:
+      REPOSITORY: ${{ steps.resolve.outputs.repository }}
+      REPO_NAME: ${{ steps.resolve.outputs.repo-name }}
+      REF: ${{ steps.resolve.outputs.ref }}
+      SHA: ${{ steps.resolve.outputs.sha }}
+      INPUT_CMAKE_FLAGS: ${{ inputs.cmake-flags }}
+      INPUT_BUILD_FLAGS: ${{ inputs.build-flags }}
+      INPUT_PRE_BUILD_COMMAND: ${{ inputs.pre-build-command }}
+      INPUT_SUBMODULES: ${{ inputs.submodules }}
+      INPUT_CACHE_KEY_EXTRA: ${{ inputs.cache-key-extra }}
+      INPUT_DEPENDS_ON: ${{ inputs.depends-on }}
+    run: ${{ github.action_path }}/scripts/fingerprint.sh
+
   - name: Restore build from cache
     id: restore
     uses: actions/cache/restore@v6
-    env:
-      cache-name: cache-${{ steps.latest-ref.outputs.repo-name }}
     with:
-      path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/cache
-      key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ steps.latest-ref.outputs.latest-ref }}
-  - if: steps.restore.outputs.cache-hit != 'true'
-    name: Checkout repo
+      path: ${{ steps.fingerprint.outputs.install-path }}
+      key: ${{ steps.fingerprint.outputs.cache-key }}
+
+  - name: Checkout repo
+    if: steps.restore.outputs.cache-hit != 'true'
     uses: actions/checkout@v7
     with:
-      repository: ${{ inputs.repository }}
-      ref: ${{ steps.chosen-ref.outputs.ref }}
-      path: ${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/git
+      repository: ${{ steps.resolve.outputs.repository }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      path: ${{ steps.fingerprint.outputs.checkout-path }}
       token: ${{ inputs.token }}
       submodules: ${{ inputs.submodules }}
-  - if: steps.restore.outputs.cache-hit != 'true'
-    name: Build repo
+
+  - name: Build repo
+    if: steps.restore.outputs.cache-hit != 'true'
     shell: bash
-    run: |
-      env | sudo ${{ inputs.shell }} -c 'source /dev/stdin; ${{ inputs.pre-build-command || ':' }} && cd $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }} && mkdir -p git/build cache && cd git/build && cmake -DCMAKE_INSTALL_PREFIX=../../cache ${{ inputs.cmake-flags }} .. && cmake --build . --target install -j $(getconf _NPROCESSORS_ONLN) ${{ inputs.build-flags }}'
-  - if: steps.restore.outputs.cache-hit != 'true'
-    name: Save build to cache
-    id: save
-    uses: actions/cache/save@v6
     env:
-      cache-name: cache-${{ steps.latest-ref.outputs.repo-name }}
+      SOURCE_PATH: ${{ steps.fingerprint.outputs.source-path }}
+      INSTALL_PATH: ${{ steps.fingerprint.outputs.install-path }}
+      BUILD_SHELL: ${{ inputs.shell }}
+      PRE_BUILD_COMMAND: ${{ inputs.pre-build-command }}
+      CMAKE_FLAGS: ${{ inputs.cmake-flags }}
+      BUILD_FLAGS: ${{ inputs.build-flags }}
+      USE_SUDO: ${{ inputs.sudo }}
+    run: ${{ github.action_path }}/scripts/build.sh
+
+  - name: Save build to cache
+    if: steps.restore.outputs.cache-hit != 'true'
+    uses: actions/cache/save@v6
     with:
-      path: ${{ github.workspace }}/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/cache
-      key: ${{ steps.restore.outputs.cache-primary-key }}
+      path: ${{ steps.fingerprint.outputs.install-path }}
+      key: ${{ steps.fingerprint.outputs.cache-key }}
+
   - name: Install
     shell: bash
-    run: sudo cp -r $GITHUB_WORKSPACE/${{ steps.latest-ref.outputs.repo-name }}${{ steps.chosen-ref.outputs.ref }}/cache/* /usr/local/.
+    env:
+      INSTALL_PATH: ${{ steps.fingerprint.outputs.install-path }}
+      INSTALL_PREFIX: ${{ inputs.install-prefix }}
+      USE_SUDO: ${{ inputs.sudo }}
+    run: ${{ github.action_path }}/scripts/install.sh

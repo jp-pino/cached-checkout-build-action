@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Minimal curl stand-in for tests. Understands: -s -S -o FILE -w FMT -H HDR URL.
+# Serves $MOCK_API_DIR/<path with / replaced by __>.json with an optional
+# .status file (default 200). Appends each requested path to $MOCK_API_LOG.
+set -euo pipefail
+out=/dev/stdout; wfmt=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -w) wfmt="$2"; shift 2 ;;
+    -H) echo "$2" >> "${MOCK_API_HEADERS:-/dev/null}"; shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+path="${url#"${GITHUB_API_URL:-https://api.github.com}"/}"
+echo "$path" >> "${MOCK_API_LOG:-/dev/null}"
+file="$MOCK_API_DIR/$(printf '%s' "$path" | sed 's#/#__#g')"
+if [ -f "$file.json" ]; then
+  status=200
+  [ -f "$file.status" ] && status="$(cat "$file.status")"
+  cat "$file.json" > "$out"
+else
+  status=404
+  printf '{"message":"Not Found (mock: %s)"}' "$path" > "$out"
+fi
+[ "$wfmt" = '%{http_code}' ] && printf '%s' "$status"
+exit 0
