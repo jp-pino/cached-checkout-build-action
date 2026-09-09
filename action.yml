@@ -1,7 +1,5 @@
 name: 'Cached checkout and build'
-description: >
-  Check out a CMake repository, build and install it, and cache the install tree keyed on the commit,
-  the build flags and the dependency chain built earlier in the job.
+description: 'Check out, build and install a CMake repository, caching the install tree by commit, flags and dependency chain'
 branding:
   icon: layers
   color: blue
