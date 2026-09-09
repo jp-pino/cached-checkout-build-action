@@ -134,6 +134,15 @@ runs:
       path: ${{ steps.fingerprint.outputs.install-path }}
       key: ${{ steps.fingerprint.outputs.cache-key }}
 
+  - name: Prepare work directory
+    if: steps.restore.outputs.cache-hit != 'true'
+    shell: bash
+    env:
+      SOURCE_PATH: ${{ steps.fingerprint.outputs.source-path }}
+      INSTALL_PATH: ${{ steps.fingerprint.outputs.install-path }}
+      USE_SUDO: ${{ inputs.sudo }}
+    run: ${{ github.action_path }}/scripts/prepare.sh
+
   - name: Checkout repo
     if: steps.restore.outputs.cache-hit != 'true'
     uses: actions/checkout@v7
