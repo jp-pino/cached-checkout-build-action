@@ -154,6 +154,32 @@ INPUT_DEPENDENCY_OVERRIDES='- **Depends on**: [libblunux#424](https://github.com
 assert_status "exits 0" 0 "$RC"
 assert_eq "ref" refs/pull/424/head "$(out ref)"
 
+echo "# override: pull request unreadable (token without pull-requests access) -> git ref"
+new_case; setup_api
+echo '{"message":"Resource not accessible by personal access token"}' > "$MOCK_API_DIR/repos__BluEye-Robotics__libblunux__pulls__424.json"
+echo 403 > "$MOCK_API_DIR/repos__BluEye-Robotics__libblunux__pulls__424.status"
+echo "{\"ref\":\"refs/pull/424/head\",\"object\":{\"sha\":\"$SHA_PR\",\"type\":\"commit\"}}" \
+  > "$MOCK_API_DIR/repos__BluEye-Robotics__libblunux__git__ref__pull__424__head.json"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main \
+INPUT_DEPENDENCY_OVERRIDES='Depends on https://github.com/BluEye-Robotics/libblunux/pull/424' run
+assert_status "exits 0" 0 "$RC"
+assert_eq "ref" refs/pull/424/head "$(out ref)"
+assert_eq "sha from the git ref" "$SHA_PR" "$(out sha)"
+assert_eq "overridden" true "$(out ref-overridden)"
+assert_contains "git ref requested" "repos/BluEye-Robotics/libblunux/git/ref/pull/424/head" "$(cat "$MOCK_API_LOG")"
+assert_contains "notice printed" "::notice::Dependency override: building BluEye-Robotics/libblunux from pull request #424 (pull/424/head @ ${SHA_PR:0:12})" "$OUT"
+assert_contains "explains the missing state" "state is unknown" "$OUT"
+assert_not_contains "no warning" "::warning::" "$OUT"
+
+echo "# override: pull request and git ref both unreadable -> error names both"
+new_case; setup_api
+echo 403 > "$MOCK_API_DIR/repos__BluEye-Robotics__libblunux__pulls__424.status"
+INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main \
+INPUT_DEPENDENCY_OVERRIDES='Depends on https://github.com/BluEye-Robotics/libblunux/pull/424' run
+assert_status "exits 1" 1 "$RC"
+assert_contains "pull request error" "GitHub API repos/BluEye-Robotics/libblunux/pulls/424 returned HTTP 403" "$OUT"
+assert_contains "git ref error" "Reading the ref directly failed too: GitHub API repos/BluEye-Robotics/libblunux/git/ref/pull/424/head returned HTTP 404" "$OUT"
+
 echo "# override: merged PR still resolves but warns"
 new_case; setup_api
 INPUT_REPOSITORY=BluEye-Robotics/libblunux INPUT_REF=main \

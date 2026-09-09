@@ -199,7 +199,9 @@ Details:
 - To take the text from somewhere else, set `dependency-overrides` explicitly, for example to the head
   commit message. Set it to `''` to disable the feature for a step.
 - Pull request heads are fetched from the base repository, so a pull request from a fork works too
-  and the fork itself is never contacted.
+  and the fork itself is never contacted. A `token` that can only read contents (enough to clone)
+  still resolves `pull/N` links through the pull request's git ref; it just cannot warn when the pull
+  request is merged or closed. Give it `pull-requests: read` for that.
 
 ## Migrating from v4
 

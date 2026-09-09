@@ -239,18 +239,36 @@ if [ -n "$override_kind" ]; then
   overridden=true
   case "$override_kind" in
     pull)
-      pr_json="$(api "repos/$repository/pulls/$override_value")"
-      sha="$(jq -r '.head.sha // empty' <<< "$pr_json")"
-      [ -n "$sha" ] || die "Pull request $repository#$override_value has no head commit"
       ref="refs/pull/$override_value/head"
-      pr_state="$(jq -r '.state // empty' <<< "$pr_json")"
-      pr_merged="$(jq -r '.merged // false' <<< "$pr_json")"
-      pr_head="$(jq -r '.head.label // .head.ref // empty' <<< "$pr_json")"
-      if [ "$pr_merged" = true ]; then
-        warn "$repository#$override_value ($pr_head) is already merged; the 'Depends on' line can probably be removed"
-      elif [ "$pr_state" = closed ]; then
-        warn "$repository#$override_value ($pr_head) is closed without being merged"
+      pr_path="repos/$repository/pulls/$override_value"
+      pr_body="$(mktemp)"
+      status="$(api_raw "$pr_path" "$pr_body")"
+      if [[ "$status" == 2* ]]; then
+        sha="$(jq -r '.head.sha // empty' "$pr_body")"
+        [ -n "$sha" ] || die "Pull request $repository#$override_value has no head commit"
+        pr_state="$(jq -r '.state // empty' "$pr_body")"
+        pr_merged="$(jq -r '.merged // false' "$pr_body")"
+        pr_head="$(jq -r '.head.label // .head.ref // empty' "$pr_body")"
+        if [ "$pr_merged" = true ]; then
+          warn "$repository#$override_value ($pr_head) is already merged; the 'Depends on' line can probably be removed"
+        elif [ "$pr_state" = closed ]; then
+          warn "$repository#$override_value ($pr_head) is closed without being merged"
+        fi
+      else
+        # A token with only contents access (enough to clone) cannot read pull
+        # requests, but it can read the pull request's git ref.
+        pr_error="$(api_error "$pr_path" "$pr_body" "$status")"
+        ref_path="repos/$repository/git/ref/pull/$override_value/head"
+        status="$(api_raw "$ref_path" "$pr_body")"
+        if [[ "$status" != 2* ]]; then
+          die "$pr_error Reading the ref directly failed too: $(api_error "$ref_path" "$pr_body" "$status")"
+        fi
+        sha="$(jq -r '.object.sha // empty' "$pr_body")"
+        [ -n "$sha" ] || die "GitHub API $ref_path did not return a commit"
+        pr_head="pull/$override_value/head"
+        log "Pull request $repository#$override_value could not be read ($pr_error), so its state is unknown; give the token pull-requests: read access to be warned when it is merged or closed."
       fi
+      rm -f "$pr_body"
       notice "Dependency override: building $repository from pull request #$override_value ($pr_head @ ${sha:0:12}) because of '$override_source'"
       ;;
     commit)
