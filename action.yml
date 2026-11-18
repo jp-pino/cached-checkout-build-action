@@ -120,7 +120,7 @@ runs:
       INPUT_TOKEN: ${{ inputs.token }}
       INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
       INPUT_DEPENDENCY_OVERRIDES: ${{ inputs.dependency-overrides }}
-    run: ${{ github.action_path }}/scripts/resolve-ref.sh
+    run: '"$GITHUB_ACTION_PATH/scripts/resolve-ref.sh"'
 
   - name: Compute fingerprint and cache key
     id: fingerprint
@@ -136,7 +136,7 @@ runs:
       INPUT_SUBMODULES: ${{ inputs.submodules }}
       INPUT_CACHE_KEY_EXTRA: ${{ inputs.cache-key-extra }}
       INPUT_DEPENDS_ON: ${{ inputs.depends-on }}
-    run: ${{ github.action_path }}/scripts/fingerprint.sh
+    run: '"$GITHUB_ACTION_PATH/scripts/fingerprint.sh"'
 
   - name: Restore build from cache
     id: restore
@@ -152,7 +152,7 @@ runs:
       SOURCE_PATH: ${{ steps.fingerprint.outputs.source-path }}
       INSTALL_PATH: ${{ steps.fingerprint.outputs.install-path }}
       USE_SUDO: ${{ inputs.sudo }}
-    run: ${{ github.action_path }}/scripts/prepare.sh
+    run: '"$GITHUB_ACTION_PATH/scripts/prepare.sh"'
 
   - name: Checkout repo
     if: steps.restore.outputs.cache-hit != 'true'
@@ -175,7 +175,7 @@ runs:
       CMAKE_FLAGS: ${{ inputs.cmake-flags }}
       BUILD_FLAGS: ${{ inputs.build-flags }}
       USE_SUDO: ${{ inputs.sudo }}
-    run: ${{ github.action_path }}/scripts/build.sh
+    run: '"$GITHUB_ACTION_PATH/scripts/build.sh"'
 
   - name: Save build to cache
     if: steps.restore.outputs.cache-hit != 'true'
@@ -190,4 +190,4 @@ runs:
       INSTALL_PATH: ${{ steps.fingerprint.outputs.install-path }}
       INSTALL_PREFIX: ${{ inputs.install-prefix }}
       USE_SUDO: ${{ inputs.sudo }}
-    run: ${{ github.action_path }}/scripts/install.sh
+    run: '"$GITHUB_ACTION_PATH/scripts/install.sh"'
