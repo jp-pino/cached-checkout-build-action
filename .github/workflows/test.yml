@@ -151,6 +151,47 @@ jobs:
           echo "registry:"; printf '%s\n' "$CACHED_BUILD_REGISTRY"
           echo "all assertions passed"
 
+  container:
+    name: Build fmt -> spdlog chain in a container job
+    # In a container job ${{ github.action_path }} expands to the runner's host
+    # path, which does not exist inside the container. The action's steps must
+    # use $GITHUB_ACTION_PATH, which the runner translates.
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install --no-install-recommends -y ca-certificates curl jq git cmake g++ make
+
+      - uses: actions/checkout@v7
+
+      # cache-key-extra keeps these apart from the runner builds above, which
+      # link against another Ubuntu's libraries.
+      - name: Build fmt
+        uses: ./
+        with:
+          repository: fmtlib/fmt
+          ref: ${{ env.FMT_OLD }}
+          cmake-flags: -DFMT_TEST=OFF -DFMT_DOC=OFF
+          cache-key-extra: container-ubuntu-24.04
+
+      - name: Build spdlog against fmt
+        uses: ./
+        with:
+          repository: gabime/spdlog
+          ref: ${{ env.SPDLOG }}
+          depends-on: fmtlib/fmt
+          cmake-flags: -DSPDLOG_FMT_EXTERNAL=ON -DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF
+          cache-key-extra: container-ubuntu-24.04
+
+      - name: Consumer links against the installed chain
+        run: |
+          set -eu
+          cmake -S tests/fixtures/consumer -B "$RUNNER_TEMP/consumer"
+          cmake --build "$RUNNER_TEMP/consumer"
+          "$RUNNER_TEMP/consumer/consumer"
+
   cache-hit:
     name: Second job restores the chain from cache
     needs: build-chain
